@@ -11,9 +11,10 @@ import subprocess
 import sys
 import urllib.request
 import zipfile
-from pathlib import Path
+from pathlib import Path, WindowsPath
 
 ROOT = Path(__file__).resolve().parent
+
 SETUP_DONE = ROOT / ".setup_done"
 
 # ── colour helpers (no third-party deps) ─────────────────────────────────────
@@ -52,7 +53,7 @@ TOOLS = [
     {
         "name": "ffmpeg.exe",
         "label": "ffmpeg    (audio / video encoding)",
-        "candidates": [ROOT / "ffmpeg" / "ffmpeg.exe"],
+        "candidates": [ROOT / "ffmpeg" / "ffmpeg.exe", 'ffmpeg.exe', 'ffmpeg'],
         "auto": True,
         "download_url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
         "extract": None,   # patched below after function definitions
@@ -136,10 +137,9 @@ TOOLS[2]["extract"] = _vgmstream_extract
 
 def find_tool(tool: dict) -> Path | None:
     for c in tool["candidates"]:
-        if c.is_file():
+        if shutil.which(c):
             return c
     return None
-
 
 def download_with_progress(url: str, dest: Path):
     print(f"  Downloading {url}")
@@ -151,7 +151,6 @@ def download_with_progress(url: str, dest: Path):
         print(f"\r    [{bar}] {pct:3d}%", end="", flush=True)
     urllib.request.urlretrieve(url, dest, reporthook=_reporthook)
     print()  # newline after bar
-
 
 def try_auto_install(tool: dict) -> bool:
     tmp = ROOT / f"_setup_tmp_{tool['name']}.zip"
@@ -434,6 +433,7 @@ def run_setup(force=False):
     print(BOLD("[ Tools ]"))
     missing = []
     for tool in TOOLS:
+        print(tool['name'])
         found = find_tool(tool)
         if found:
             print(f"  {OK('✓')} {tool['label']}")
@@ -442,7 +442,6 @@ def run_setup(force=False):
             print(f"  {ERR('✗')} {tool['label']}")
             missing.append(tool)
     print()
-
     if not missing:
         print(OK("  All tools are present!"))
     else:
