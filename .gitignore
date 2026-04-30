@@ -40,3 +40,11 @@ __pycache__/
 # Saved presets (personal, not for repo)
 .db_presets.json
 .mas_settings.json
+
+# dependencies
+crid
+flac
+ffmpeg
+maiforge
+vgmstream-win64
+assetstudiocli
