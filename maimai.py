@@ -308,6 +308,7 @@ def _ask_with_hint(prompt: str, hint: str = "") -> str:
     Input line that fills `hint` when the user presses Tab or → (right arrow).
     Falls back to plain input() on non-Windows or when there is no hint.
     """
+    print(hint)
     if not WINDOWS or not hint:
         full_prompt = f"{prompt}[→/Tab: {hint}] " if hint else prompt
         return input(full_prompt).strip().strip('"')
@@ -559,7 +560,7 @@ def output_folder_has_any_files(folder: Path):
 def output_folder_has_relevant_image_outputs(folder: Path):
     if not folder.exists() or not folder.is_dir():
         return False
-
+    print(folder)
     for p in folder.rglob("*"):
         if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
             return True
@@ -1718,11 +1719,18 @@ def prompt_image(single_or_batch):
 
     s = load_settings()
     last_in = s.get("last_image_input", "")
-
+    last_xml_in = s.get("last_xml_input", "")
+    
     if single_or_batch == "1":
         raw_in = _ask_with_hint("Enter path to your .ab file: ", last_in)
         input_path = Path(raw_in)
         if not (input_path.exists() and input_path.is_file()):
+            print("File not found.")
+            wait_enter()
+            return None
+        raw_in = _ask_with_hint("Enter path to your .xml file: ", last_xml_in)
+        xml_path = Path(raw_in)
+        if not (xml_path.exists() and xml_path.is_file()):
             print("File not found.")
             wait_enter()
             return None
@@ -1733,7 +1741,16 @@ def prompt_image(single_or_batch):
             print("Folder not found.")
             wait_enter()
             return None
+        # complete copy paste, but for the xml folder path
+        raw_in = _ask_with_hint("Enter path to your .xml folder: ", last_xml_in)        
+        xml_path = Path(raw_in)
+        if not (xml_path.exists() and xml_path.is_dir()):
+            print("Folder not found.")
+            wait_enter()
+            return None
+        
     update_setting("last_image_input", str(input_path))
+    update_setting("last_xml_input", str(xml_path))
 
     output_path = ask_output_dir("Enter output folder: ")
 
@@ -1744,6 +1761,7 @@ def prompt_image(single_or_batch):
     return {
         "input_path": input_path,
         "output_path": output_path,
+        "xml_path": xml_path,
         "mode_type": "single" if single_or_batch == "1" else "batch",
         "existing_output_policy": policy,
     }
@@ -1781,6 +1799,7 @@ _SETTINGS_DEFAULTS = {
     "last_mp3_input": "",
     "last_flac_input": "",
     "last_image_input": "",
+    "last_xml_input": "",
     "last_chart_input": "",
     "last_db_input": "",
 }
@@ -1801,6 +1820,8 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict):
+    for k, v in settings.items():
+        print(k, v)
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2, ensure_ascii=False)
@@ -1809,6 +1830,7 @@ def save_settings(settings: dict):
 
 
 def update_setting(key: str, value):
+    print(key, value)
     s = load_settings()
     s[key] = value
     save_settings(s)
@@ -3182,7 +3204,8 @@ def build_assetstudio_command(asset_input: Path, output_dir: Path, resolved_tool
 
 def run_image_shell(payload, display_mode, resolved_tools):
     input_path = payload["input_path"]
-    output_root = payload["output_path"]
+    output_root = payload["output_path"]     
+    xml_path = payload["xml_path"]
     mode_type = payload["mode_type"]
     policy = payload.get("existing_output_policy", "overwrite")
 
@@ -3216,7 +3239,6 @@ def run_image_shell(payload, display_mode, resolved_tools):
 
         cmd = build_assetstudio_command(input_path, output_root, resolved_tools)
         cmd_str = " ".join(f'"{str(x)}"' if " " in str(x) else str(x) for x in cmd)
-
         if display_mode == "2":
             print("Running AssetStudioCLI:")
             print(cmd_str)
@@ -3227,7 +3249,14 @@ def run_image_shell(payload, display_mode, resolved_tools):
             stdout_text = result.stdout.strip() if result.stdout else ""
             stderr_text = result.stderr.strip() if result.stderr else ""
             flattened_count = flatten_assetstudio_texture2d_output(output_root)
-
+            
+            if result.returncode == 0:
+                root = ET.parse(xml_path).getroot()
+                itemName = root.findall('.//name//str')[0].text # xml solution from https://stackoverflow.com/a/57354541
+                    
+                for x in Path(output_root).glob('*.png'):
+                    x.rename(Path(x.parent, '{}_{}'.format(itemName, x.name)))
+                
             if display_mode == "2":
                 print(f"Return code: {result.returncode}\n")
                 if stdout_text:
@@ -3318,6 +3347,20 @@ def run_image_shell(payload, display_mode, resolved_tools):
             stdout_text = result.stdout.strip() if result.stdout else ""
             stderr_text = result.stderr.strip() if result.stderr else ""
             flattened_count = flatten_assetstudio_texture2d_output(output_root)
+            
+            if result.returncode == 0:
+                # xml solution from https://stackoverflow.com/a/57354541
+                xmlDict = {}
+                p = Path(xml_path)
+                for x in p.iterdir():
+                    if x.is_dir():
+                        root = ET.parse(xml_path / x.name / f'{p.name.title()}.xml').getroot()
+                        print(x.name, p.name)
+                        xmlDict[x.name[-6:]] = root.findall('.//name//str')[0].text
+                    
+                for x in Path(output_root).glob('*.png'):
+                    if x.name[-10:-4] == '000000': continue # you can always skip 000000 as its a placeholder (no .xml)
+                    x.rename(Path(x.parent, '{}_{}'.format(xmlDict[x.name[-10:-4]], x.name)))
 
             if display_mode == "2":
                 print(f"Return code: {result.returncode}\n")
