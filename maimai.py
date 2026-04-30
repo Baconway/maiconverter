@@ -1720,6 +1720,7 @@ def prompt_image(single_or_batch):
     s = load_settings()
     last_in = s.get("last_image_input", "")
     last_xml_in = s.get("last_xml_input", "")
+    xml_path = None
     
     if single_or_batch == "1":
         raw_in = _ask_with_hint("Enter path to your .ab file: ", last_in)
@@ -1728,12 +1729,15 @@ def prompt_image(single_or_batch):
             print("File not found.")
             wait_enter()
             return None
-        raw_in = _ask_with_hint("Enter path to your .xml file: ", last_xml_in)
-        xml_path = Path(raw_in)
-        if not (xml_path.exists() and xml_path.is_file()):
-            print("File not found.")
-            wait_enter()
-            return None
+        
+        if ask_yes_no("Do you want to append the title of this asset? (Easier Searching) [Y / N]"):
+            raw_in = _ask_with_hint("Enter path to your .xml file: ", last_xml_in)
+            xml_path = Path(raw_in)
+            if not (xml_path.exists() and xml_path.is_file()):
+                print("File not found.")
+                wait_enter()
+                return None
+            update_setting("last_xml_input", str(xml_path))
     else:
         raw_in = _ask_with_hint("Enter path to your .ab folder: ", last_in)
         input_path = Path(raw_in)
@@ -1742,15 +1746,16 @@ def prompt_image(single_or_batch):
             wait_enter()
             return None
         # complete copy paste, but for the xml folder path
-        raw_in = _ask_with_hint("Enter path to your .xml folder: ", last_xml_in)        
-        xml_path = Path(raw_in)
-        if not (xml_path.exists() and xml_path.is_dir()):
-            print("Folder not found.")
-            wait_enter()
-            return None
+        if ask_yes_no("Do you want to append the title of each asset? (Easier Searching) [Y / N]"):
+            raw_in = _ask_with_hint("Enter path to your .xml folder: ", last_xml_in)        
+            xml_path = Path(raw_in)
+            if not (xml_path.exists() and xml_path.is_dir()):
+                print("Folder not found.")
+                wait_enter()
+                return None
+            update_setting("last_xml_input", str(xml_path))
         
     update_setting("last_image_input", str(input_path))
-    update_setting("last_xml_input", str(xml_path))
 
     output_path = ask_output_dir("Enter output folder: ")
 
@@ -1758,14 +1763,21 @@ def prompt_image(single_or_batch):
     if policy is None:
         return None
 
-    return {
-        "input_path": input_path,
-        "output_path": output_path,
-        "xml_path": xml_path,
-        "mode_type": "single" if single_or_batch == "1" else "batch",
-        "existing_output_policy": policy,
-    }
-
+    if xml_path:
+        return {
+            "input_path": input_path,
+            "output_path": output_path,
+            "xml_path": xml_path,
+            "mode_type": "single" if single_or_batch == "1" else "batch",
+            "existing_output_policy": policy,
+        }
+    else:
+        return {
+            "input_path": input_path,
+            "output_path": output_path,
+            "mode_type": "single" if single_or_batch == "1" else "batch",
+            "existing_output_policy": policy,
+        }
 
 _DB_CATEGORY_LABELS = [
     "Genre", "Level", "Cabinet", "Composer", "BPM", "SD/DX Chart", "No subfolders"
@@ -1820,8 +1832,6 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict):
-    for k, v in settings.items():
-        print(k, v)
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2, ensure_ascii=False)
@@ -1830,7 +1840,6 @@ def save_settings(settings: dict):
 
 
 def update_setting(key: str, value):
-    print(key, value)
     s = load_settings()
     s[key] = value
     save_settings(s)
@@ -3203,9 +3212,15 @@ def build_assetstudio_command(asset_input: Path, output_dir: Path, resolved_tool
 
 
 def run_image_shell(payload, display_mode, resolved_tools):
+    xml_path = None
     input_path = payload["input_path"]
-    output_root = payload["output_path"]     
-    xml_path = payload["xml_path"]
+    output_root = payload["output_path"]  
+    
+    try:
+        xml_path = payload["xml_path"]
+    except KeyError:
+        print('not found, ignoring')
+        
     mode_type = payload["mode_type"]
     policy = payload.get("existing_output_policy", "overwrite")
 
@@ -3251,11 +3266,12 @@ def run_image_shell(payload, display_mode, resolved_tools):
             flattened_count = flatten_assetstudio_texture2d_output(output_root)
             
             if result.returncode == 0:
-                root = ET.parse(xml_path).getroot()
-                itemName = root.findall('.//name//str')[0].text # xml solution from https://stackoverflow.com/a/57354541
+                if xml_path:
+                    root = ET.parse(xml_path).getroot()
+                    itemName = root.findall('.//name//str')[0].text # xml solution from https://stackoverflow.com/a/57354541
                     
-                for x in Path(output_root).glob('*.png'):
-                    x.rename(Path(x.parent, '{}_{}'.format(itemName, x.name)))
+                    for x in Path(output_root).glob('*.png'):
+                        x.rename(Path(x.parent, '{}_{}'.format(itemName, x.name))) # since you choose the .xml, exceptions dont need to be handled
                 
             if display_mode == "2":
                 print(f"Return code: {result.returncode}\n")
@@ -3349,18 +3365,27 @@ def run_image_shell(payload, display_mode, resolved_tools):
             flattened_count = flatten_assetstudio_texture2d_output(output_root)
             
             if result.returncode == 0:
+                if xml_path:
                 # xml solution from https://stackoverflow.com/a/57354541
-                xmlDict = {}
-                p = Path(xml_path)
-                for x in p.iterdir():
-                    if x.is_dir():
-                        root = ET.parse(xml_path / x.name / f'{p.name.title()}.xml').getroot()
-                        print(x.name, p.name)
-                        xmlDict[x.name[-6:]] = root.findall('.//name//str')[0].text
-                    
-                for x in Path(output_root).glob('*.png'):
-                    if x.name[-10:-4] == '000000': continue # you can always skip 000000 as its a placeholder (no .xml)
-                    x.rename(Path(x.parent, '{}_{}'.format(xmlDict[x.name[-10:-4]], x.name)))
+                    xmlDict = {}
+                    p = Path(xml_path)
+                    for x in p.iterdir():
+                        if x.is_dir():
+                            root = ET.parse(xml_path / x.name / f'{p.name.title()}.xml').getroot()
+                            print(x.name, p.name)
+                            xmlDict[x.name[-6:]] = root.findall('.//name//str')[0].text
+                        
+                    print('renaming assets')
+                
+                    for x in Path(output_root).glob('*.png'):
+                        if x.name[-10:-4] == '000000': continue # you can always skip 000000 as its a placeholder (no .xml)
+                        try:
+                            xmlDict[x.name[-10:-4]], x.name
+                        except KeyError:
+                            print('Asset does not have an appropriate XML value, skipping')
+                            continue
+                        else:
+                            x.rename(Path(x.parent, '{}_{}'.format(xmlDict[x.name[-10:-4]].translate(str.maketrans('/\\:*?"<>|', '_________')), x.name)))
 
             if display_mode == "2":
                 print(f"Return code: {result.returncode}\n")
